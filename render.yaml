@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: researchgraph-agent-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: API_PROVIDER
+        value: gmi
+      - key: GMI_API_BASE_URL
+        value: https://api.gmi-serving.com
+      - key: GMI_MODEL_NAME
+        value: deepseek-ai/DeepSeek-V4-Pro
+      - key: GMI_API_KEY
+        sync: false
+      - key: ACCESS_CODE
+        sync: false

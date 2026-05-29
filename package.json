@@ -1,0 +1,16 @@
+{
+  "name": "ontology-note-helper",
+  "version": "1.0.0",
+  "description": "AI-powered ontology note helper and knowledge graph visualizer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest"
+  },
+  "devDependencies": {}
+}

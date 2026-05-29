@@ -1,0 +1,10 @@
+model_list:
+  - model_name: deepseek-gmi
+    litellm_params:
+      model: openai/deepseek-ai/DeepSeek-V4-Pro
+      api_base: https://api.gmi-serving.com/v1
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false

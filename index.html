@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResearchGraph Agent - AI Research Note Mapper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.75/dist/3d-force-graph.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1',
+                        secondary: '#8b5cf6',
+                        accent: '#a855f7',
+                        dark: '#1e1b4b',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto { content-visibility: auto; }
+            .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); }
+            .glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+            .node-hover { transition: all 0.3s ease; }
+        }
+    </style>
+
+    <style>
+        :root { color-scheme: dark; --primary: #6366f1; --secondary: #8b5cf6; --accent: #a855f7; --slate-900: #0f172a; --slate-800: #1e293b; --slate-700: #334155; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body { min-height: 100vh; background: radial-gradient(circle at top left, rgba(99, 102, 241, 0.25), transparent 34rem), linear-gradient(135deg, #0f172a 0%, #111827 50%, #1e1b4b 100%); color: #fff; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        button, input, textarea { font: inherit; }
+        button { cursor: pointer; border: 0; border-radius: 0.5rem; transition: 0.2s ease; padding: 0.65rem 0.9rem; }
+        button:hover { filter: brightness(1.12); transform: translateY(-1px); }
+        textarea, input[type="text"] { color: #fff; background: rgba(15, 23, 42, 0.72); border: 1px solid rgba(100, 116, 139, 0.75); border-radius: 0.75rem; outline: none; }
+        textarea:focus, input[type="text"]:focus { border-color: rgba(99, 102, 241, 0.85); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.22); }
+        h1, h2, h3, h4, p { margin-top: 0; }
+        .hidden { display: none !important; }
+
+        /* ── Layout ── */
+        .app-root { display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 220px; min-width: 220px; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border-right: 1px solid rgba(148, 163, 184, 0.12); display: flex; flex-direction: column; padding: 1rem 0; overflow-y: auto; z-index: 10; }
+        .main-area { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+        /* ── Sidebar ── */
+        .sidebar-brand { padding: 0 1rem 1rem; border-bottom: 1px solid rgba(148, 163, 184, 0.12); margin-bottom: 0.75rem; }
+        .sidebar-brand h1 { font-size: 1rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem; }
+        .sidebar-brand p { font-size: 0.65rem; color: rgba(255,255,255,0.5); margin-top: 0.25rem; }
+
+        .sidebar-section { padding: 0 0.5rem; margin-bottom: 0.75rem; }
+        .sidebar-section-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.15em; color: rgba(255,255,255,0.35); padding: 0 0.5rem; margin-bottom: 0.35rem; }
+        .sidebar-btn { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: transparent; color: rgba(255,255,255,0.7); font-size: 0.82rem; }
+        .sidebar-btn:hover { background: rgba(99, 102, 241, 0.15); color: #fff; }
+        .sidebar-btn.active { background: rgba(99, 102, 241, 0.2); color: #fff; font-weight: 600; }
+        .sidebar-btn i { width: 1.1rem; text-align: center; }
+        .sidebar-spacer { flex: 1; }
+        .sidebar-footer { padding: 0.5rem; border-top: 1px solid rgba(148, 163, 184, 0.1); }
+
+        /* ── Toolbar ── */
+        .toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 1.25rem; background: rgba(15, 23, 42, 0.6); border-bottom: 1px solid rgba(148, 163, 184, 0.08); }
+        .toolbar-tabs { display: flex; gap: 0.25rem; }
+        .tab-btn { font-size: 0.78rem; padding: 0.4rem 0.85rem; background: transparent; color: rgba(255,255,255,0.5); border-radius: 0.4rem; }
+        .tab-btn:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8); }
+        .tab-btn.active { background: rgba(99, 102, 241, 0.2); color: #fff; }
+        .toolbar-actions { display: flex; gap: 0.5rem; }
+        .toolbar-actions button { font-size: 0.75rem; padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
+        .toolbar-actions button:hover { background: rgba(255,255,255,0.14); color: #fff; }
+        .btn-primary { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%) !important; color: #fff !important; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3) !important; }
+
+        /* ── Content panes ── */
+        .content-area { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; }
+        .pane { display: none; flex-direction: column; flex: 1; }
+        .pane.active { display: flex; }
+
+        .status-bar { background: rgba(30, 41, 59, 0.6); border-radius: 0.75rem; padding: 0.6rem 1rem; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.75rem; }
+        .upload-zone { border: 2px dashed rgba(99, 102, 241, 0.5); border-radius: 1rem; padding: 2rem; text-align: center; background: rgba(30, 41, 59, 0.3); cursor: pointer; transition: 0.2s; }
+        .upload-zone:hover { border-color: rgba(99, 102, 241, 0.8); background: rgba(30, 41, 59, 0.5); }
+
+        #noteInput { width: 100%; min-height: 12rem; padding: 0.85rem 1rem; }
+        #cy { min-height: 420px; flex: 1; background: radial-gradient(circle at center, rgba(99, 102, 241, 0.14), rgba(15, 23, 42, 0.42)); border: 1px solid rgba(100, 116, 139, 0.5); border-radius: 0.75rem; }
+
+        .glass { background: rgba(15, 23, 42, 0.62); backdrop-filter: blur(16px); border: 1px solid rgba(148, 163, 184, 0.18); box-shadow: 0 20px 55px rgba(2, 6, 23, 0.28); border-radius: 1rem; padding: 1rem; }
+
+        /* ── Report ── */
+        .report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+        .report-card { background: rgba(30, 41, 59, 0.5); border-radius: 0.75rem; padding: 0.75rem; }
+        .report-card.full { grid-column: 1 / -1; }
+        .report-card h4 { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--primary); margin-bottom: 0.4rem; }
+        .report-card p, .report-card li { font-size: 0.82rem; color: rgba(255,255,255,0.75); }
+        .report-card ul { list-style: none; padding: 0; }
+        .report-card li::before { content: "• "; color: var(--primary); }
+
+        /* ── Chat ── */
+        .chat-messages { max-height: 20rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; padding: 0.5rem 0; margin-bottom: 0.75rem; }
+        .chat-bubble { max-width: 82%; padding: 0.6rem 0.85rem; border-radius: 0.75rem; font-size: 0.85rem; line-height: 1.5; }
+        .chat-bubble.user { margin-left: auto; background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); }
+        .chat-bubble.agent { margin-right: auto; background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(100, 116, 139, 0.3); }
+        .chat-bubble .label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.2rem; }
+        .chat-bubble.user .label { color: var(--primary); }
+        .chat-bubble.agent .label { color: var(--secondary); }
+
+        /* ── Misc ── */
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; color: rgba(255,255,255,0.3); }
+        .modal-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; padding: 1rem; }
+        .modal-overlay.show { display: flex; }
+        .modal-content { width: min(100%, 42rem); max-height: 88vh; overflow: auto; background: #1e293b; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 25px 90px rgba(0,0,0,0.45); }
+        @media (max-width: 768px) { .sidebar { width: 56px; min-width: 56px; } .sidebar span { display: none; } .report-grid { grid-template-columns: 1fr; } }
+
+        /* ── Study + Review ── */
+        .study-tab-btn, .review-tab-btn { font-size: 0.78rem; cursor: pointer; transition: 0.2s ease; }
+        .concept-card { background: rgba(30, 41, 59, 0.5); border-radius: 0.75rem; padding: 0.75rem; border-left: 3px solid var(--primary); margin-bottom: 0.5rem; }
+        .concept-card .name { font-weight: 600; color: #fff; font-size: 0.9rem; }
+        .concept-card .def { color: rgba(255,255,255,0.65); font-size: 0.8rem; margin-top: 0.25rem; }
+        .concept-card .meta { font-size: 0.65rem; color: rgba(255,255,255,0.35); margin-top: 0.25rem; }
+        .chain-card { background: rgba(30, 41, 59, 0.5); border-radius: 0.75rem; padding: 0.75rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
+        .chain-card .rel { color: var(--accent); font-weight: 500; }
+        .quiz-card { background: rgba(30, 41, 59, 0.5); border-radius: 0.75rem; padding: 0.75rem; margin-bottom: 0.5rem; }
+        .quiz-card .q { color: #fff; font-weight: 500; margin-bottom: 0.4rem; }
+        .quiz-card .a { color: rgba(255,255,255,0.6); display: none; padding-top: 0.4rem; border-top: 1px solid rgba(148,163,184,0.15); margin-top: 0.4rem; }
+        .quiz-card .a.show { display: block; }
+        .quiz-card .show-btn { font-size: 0.7rem; padding: 0.25rem 0.6rem; background: var(--primary); color: #fff; border-radius: 0.3rem; cursor: pointer; border: 0; }
+        .quiz-option:hover { border-color: var(--primary) !important; background: rgba(99,102,241,0.1) !important; }
+
+        /* ── Review / Flashcard ── */
+        .flashcard { background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148,163,184,0.15); border-radius: 1rem; padding: 2rem; text-align: center; min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .flashcard .front { font-size: 1.15rem; font-weight: 600; color: #fff; }
+        .flashcard .back { font-size: 0.95rem; color: rgba(255,255,255,0.75); display: none; }
+        .flashcard .back.show { display: block; }
+        .flashcard .layer-badge { font-size: 0.6rem; padding: 0.15rem 0.5rem; border-radius: 1rem; background: rgba(99,102,241,0.25); color: var(--primary); margin-bottom: 0.75rem; }
+        .rating-btns { display: flex; gap: 0.4rem; justify-content: center; margin-top: 1rem; flex-wrap: wrap; }
+        .rating-btns button { width: 2.5rem; height: 2.5rem; border-radius: 50%; font-weight: 700; font-size: 0.85rem; border: 0; cursor: pointer; transition: 0.15s; }
+        .rating-btns button:hover { transform: scale(1.12); }
+        .rating-0 { background: #ef4444; color: #fff; }
+        .rating-1 { background: #f97316; color: #fff; }
+        .rating-2 { background: #eab308; color: #000; }
+        .rating-3 { background: #84cc16; color: #000; }
+        .rating-4 { background: #22c55e; color: #fff; }
+        .rating-5 { background: #06b6d4; color: #fff; }
+
+        /* ── Knowledge Tree ── */
+        .tree-node { padding: 0.4rem 0.6rem; border-radius: 0.5rem; margin: 0.15rem 0; display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; cursor: default; }
+        .tree-node:hover { background: rgba(99,102,241,0.1); }
+        .tree-node .mastery-dots { display: flex; gap: 2px; }
+        .tree-node .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.15); }
+        .tree-node .dot.filled { background: var(--primary); }
+        .tree-node .dot.filled.good { background: #22c55e; }
+        .tree-node .dot.filled.weak { background: #eab308; }
+        .tree-node .dot.filled.poor { background: #ef4444; }
+        .tree-indent { padding-left: 1.5rem; border-left: 1px solid rgba(148,163,184,0.12); margin-left: 0.5rem; }
+
+        /* ── Stats ── */
+        .stat-card { background: rgba(30, 41, 59, 0.5); border-radius: 0.75rem; padding: 0.75rem; text-align: center; }
+        .stat-card .num { font-size: 1.5rem; font-weight: 700; color: #fff; }
+        .stat-card .label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: rgba(255,255,255,0.4); }
+        .mastery-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin-top: 0.25rem; }
+        .mastery-bar .fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #ef4444, #eab308, #22c55e); transition: width 0.5s; }
+
+        /* ── Guided Learning ── */
+        .learn-guide { position: fixed; bottom: 0; left: 0; right: 0; z-index: 40; background: rgba(15,23,42,0.92); backdrop-filter: blur(12px); border-top: 1px solid rgba(148,163,184,0.12); padding: 0.6rem 1rem; display: none; align-items: center; gap: 0.75rem; }
+        .learn-guide.show { display: flex; }
+        .learn-guide .steps { display: flex; gap: 0.25rem; flex: 1; }
+        .learn-guide .step-dot { width: 100%; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.12); transition: 0.3s; }
+        .learn-guide .step-dot.active { background: var(--primary); }
+        .learn-guide .step-dot.done { background: #22c55e; }
+        .learn-guide .step-label { font-size: 0.72rem; color: rgba(255,255,255,0.5); min-width: 5rem; }
+        .learn-guide .step-title { font-size: 0.82rem; color: #fff; font-weight: 500; }
+        .learn-guide button { font-size: 0.78rem; padding: 0.3rem 0.8rem; border-radius: 0.4rem; cursor: pointer; transition: 0.15s; white-space: nowrap; }
+        .learn-guide .learn-skip { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); border: 0; }
+        .learn-guide .learn-skip:hover { background: rgba(255,255,255,0.14); color: #fff; }
+        .learn-guide .learn-next { background: var(--primary); color: #fff; border: 0; }
+        .learn-guide .learn-next:hover { filter: brightness(1.12); }
+        .learn-guide .learn-done { background: #22c55e; color: #fff; border: 0; }
+    </style>
+</head>
+<body>
+
+<!-- ════════════ MODALS ════════════ -->
+<div id="settingsModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold">⚙️ API Settings</h3>
+            <button id="closeSettings" class="text-gray-400 hover:text-white bg-transparent"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="space-y-4">
+            <div class="bg-slate-700/50 rounded-lg p-4 text-sm text-gray-300 leading-6">
+                <p class="font-medium text-white mb-2">No user-side API key is required.</p>
+                <p>Set a deployed backend URL to let the public GitHub Pages demo call GMI Cloud through a secure Node.js server.</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-2">Backend URL (optional)</label>
+                <input type="text" id="backendUrl" placeholder="https://your-backend.example.com" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-gray-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-2">Access code (optional)</label>
+                <input type="password" id="accessCode" placeholder="Enter the access code if the backend requires one" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-gray-500">
+            </div>
+            <button id="saveSettings" class="w-full gradient-bg py-2 rounded-lg font-medium hover:opacity-90 transition">Save</button>
+        </div>
+    </div>
+</div>
+
+<div id="helpModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold">❓ How it works</h3>
+            <button id="closeHelp" class="text-gray-400 hover:text-white bg-transparent"><i class="fa fa-times"></i></button>
+        </div>
+        <div class="space-y-3 text-sm">
+            <div class="bg-slate-700/50 rounded-lg p-4">
+                <h4 class="font-bold text-primary mb-2">What is ResearchGraph Agent?</h4>
+                <p class="text-gray-300">It helps international students and researchers turn dense academic materials into concept maps, learning gaps, seminar questions, and presentation-ready action plans.</p>
+            </div>
+            <div class="bg-slate-700/50 rounded-lg p-4">
+                <h4 class="font-bold text-primary mb-2">Workflow</h4>
+                <ol class="text-gray-300 space-y-1 list-decimal list-inside">
+                    <li><strong>Ingest</strong> — Upload or paste papers, slides, or notes.</li>
+                    <li><strong>Reason</strong> — Agent extracts concepts, relationships, and gaps.</li>
+                    <li><strong>Act</strong> — View knowledge graph, report, and action plan.</li>
+                    <li><strong>Study</strong> — Review concept cards, relationship chains, and self-quizzes.</li>
+                    <li><strong>Review</strong> — Anki-style flashcards with SM-2 spaced repetition. Low-rated cards trigger deep-dive analysis.</li>
+                </ol>
+            </div>
+            <div class="bg-slate-700/50 rounded-lg p-4">
+                <h4 class="font-bold text-primary mb-2">Graph Controls</h4>
+                <ul class="text-gray-300 space-y-1"><li>• Drag nodes to move them</li><li>• Scroll to zoom</li><li>• Click a node for details</li><li>• Click an edge for relationship info</li></ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════ APP ════════════ -->
+<div class="app-root">
+
+    <!-- ──── SIDEBAR ──── -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h1><i class="fa fa-sitemap text-primary"></i> ResearchGraph</h1>
+            <p>AI Research Note Mapper</p>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">Tools</div>
+            <button class="sidebar-btn active" data-pane="input-pane"><i class="fa fa-upload"></i><span>Input</span></button>
+            <button class="sidebar-btn" data-pane="graph-pane"><i class="fa fa-map-o"></i><span>Knowledge Map</span></button>
+            <button class="sidebar-btn" data-pane="report-pane"><i class="fa fa-file-text-o"></i><span>Agent Report</span></button>
+            <button class="sidebar-btn" data-pane="chat-pane"><i class="fa fa-comments"></i><span>Follow-up Chat</span></button>
+            <button class="sidebar-btn" data-pane="study-pane"><i class="fa fa-graduation-cap"></i><span>Study</span></button>
+            <button class="sidebar-btn" data-pane="review-pane"><i class="fa fa-refresh"></i><span>Review</span></button>
+        </div>
+
+        <div class="sidebar-section">
+            <button id="learnModeBtn" class="sidebar-btn" style="background:linear-gradient(135deg,#6366f180,#a855f780);color:#fff;"><i class="fa fa-graduation-cap"></i><span>🎯 Start Learning</span></button>
+        </div>
+
+        <div class="sidebar-section" id="historySection">
+            <div class="sidebar-section-title flex items-center justify-between">
+                <span>History</span>
+                <span id="historyCount" class="text-[0.55rem] text-gray-500"></span>
+            </div>
+            <div id="historyList" class="space-y-0.5"></div>
+        </div>
+
+        <div class="sidebar-spacer"></div>
+
+        <div class="sidebar-footer">
+            <button class="sidebar-btn" id="settingsBtn"><i class="fa fa-cog"></i><span>Settings</span></button>
+            <button class="sidebar-btn" id="helpBtn"><i class="fa fa-question-circle"></i><span>Help</span></button>
+        </div>
+    </aside>
+
+    <!-- ──── MAIN ──── -->
+    <div class="main-area">
+
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <div class="toolbar-tabs">
+                <button class="tab-btn" data-pane="input-pane"><i class="fa fa-upload"></i> Input</button>
+                <button class="tab-btn" data-pane="graph-pane"><i class="fa fa-map-o"></i> Map</button>
+                <button class="tab-btn" data-pane="report-pane"><i class="fa fa-file-text-o"></i> Report</button>
+                <button class="tab-btn" data-pane="chat-pane"><i class="fa fa-comments"></i> Chat</button>
+                <button class="tab-btn" data-pane="study-pane"><i class="fa fa-graduation-cap"></i> Study</button>
+                <button class="tab-btn" data-pane="review-pane"><i class="fa fa-refresh"></i> Review</button>
+            </div>
+            <div class="toolbar-actions">
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="content-area">
+
+            <!-- Status Bar -->
+            <div id="statusBar" class="hidden">
+                <div class="status-bar">
+                    <div id="statusIcon" class="animate-spin"><i class="fa fa-circle-o-notch text-primary"></i></div>
+                    <span id="statusText" class="text-sm">Ready</span>
+                </div>
+            </div>
+
+            <!-- Pipeline Bar -->
+            <div id="pipelineBar" class="hidden mb-4">
+                <div class="glass flex items-center justify-center space-x-1 flex-wrap text-xs" style="padding:0.6rem">
+                </div>
+            </div>
+
+            <!-- ── PANE: Input ── -->
+            <div id="input-pane" class="pane active">
+                <div class="glass">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2><i class="fa fa-file-text-o text-primary mr-2"></i>Input Material</h2>
+                        <div class="flex items-center gap-2">
+                            <label for="fileInput" id="dropZone" class="flex items-center justify-center w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 cursor-pointer transition" title="Upload file">
+                                <i class="fa fa-plus text-primary text-sm"></i>
+                                <input id="fileInput" type="file" class="hidden" accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+                            </label>
+                            <button id="clearBtn" class="flex items-center justify-center w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 transition" title="Clear">
+                                <i class="fa fa-trash-o text-gray-400 text-sm"></i>
+                            </button>
+                            <button id="exampleBtn" class="flex items-center justify-center w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 transition" title="Load example">
+                                <i class="fa fa-file-text-o text-gray-400 text-sm"></i>
+                            </button>
+                            <div id="fileInfo" class="hidden text-xs text-gray-400 truncate max-w-[180px]"></div>
+                            <button id="demoBtnInPane" class="text-xs px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition flex items-center space-x-1"><i class="fa fa-play-circle"></i><span>Demo</span></button>
+                        </div>
+                    </div>
+                    <textarea id="noteInput" placeholder="Paste research notes, paper excerpts, project documents, or ask a question…" class="w-full h-48 bg-slate-800/50 border border-slate-700 rounded-lg p-4 text-white placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"></textarea>
+                    <div class="mt-3 flex items-center justify-between">
+                        <div class="text-xs text-gray-400"><span id="charCount">0</span> characters</div>
+                        <button id="extractBtn" class="btn-primary px-5 py-2.5 rounded-lg font-medium flex items-center space-x-2"><i class="fa fa-magic"></i><span>Run Agent Analysis</span></button>
+                    </div>
+                </div>
+
+                <div class="glass mt-4">
+                    <div class="bg-slate-800/30 rounded-lg p-3 mb-4 text-xs text-gray-400 flex items-center gap-2">
+                        <i class="fa fa-lightbulb-o text-amber-400"></i>
+                        <span>First time? Click <strong class="text-white">Demo</strong> to load a sample analysis instantly, or paste your own text and click <strong class="text-white">Run Agent Analysis</strong>.</span>
+                    </div>
+                    <h2 class="font-bold flex items-center mb-3 text-sm"><i class="fa fa-compass mr-2 text-primary"></i>Agent Workflow</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs text-gray-300">
+                        <div class="bg-slate-800/50 rounded-lg p-3"><div class="font-medium text-white mb-1">1. Ingest</div><p>Import papers, slides, or notes.</p></div>
+                        <div class="bg-slate-800/50 rounded-lg p-3"><div class="font-medium text-white mb-1">2. Reason</div><p>Extract concepts &amp; relationships.</p></div>
+                        <div class="bg-slate-800/50 rounded-lg p-3"><div class="font-medium text-white mb-1">3. Act</div><p>Generate graph, report &amp; gaps.</p></div>
+                        <div class="bg-slate-800/50 rounded-lg p-3"><div class="font-medium text-white mb-1">4. Study</div><p>Review concepts &amp; self-quiz.</p></div>
+                        <div class="bg-slate-800/50 rounded-lg p-3"><div class="font-medium text-white mb-1">5. Review</div><p>Anki flashcards with spaced repetition.</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── PANE: Graph ── -->
+            <div id="graph-pane" class="pane">
+                <div class="glass flex flex-col" style="flex:1;">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2><i class="fa fa-map-o text-primary mr-2"></i>Research Learning Map</h2>
+                        <div class="flex space-x-2">
+                            <button id="fitBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition" title="Fit view"><i class="fa fa-expand"></i></button>
+                            <button id="resetLayoutBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition" title="Relayout"><i class="fa fa-refresh"></i></button>
+                        </div>
+                    </div>
+                    <div id="cy" class="flex-1 rounded-lg border border-slate-700/50 relative overflow-hidden">
+                        <div id="mapZones" class="absolute inset-0 pointer-events-none hidden">
+                            <div class="absolute top-3 left-4 text-[10px] uppercase tracking-[0.2em] text-cyan-300/70">Ingest</div>
+                            <div class="absolute top-3 right-4 text-[10px] uppercase tracking-[0.2em] text-violet-300/70">Reason</div>
+                            <div class="absolute bottom-3 left-4 text-[10px] uppercase tracking-[0.2em] text-amber-300/70">Gaps</div>
+                            <div class="absolute bottom-3 right-4 text-[10px] uppercase tracking-[0.2em] text-emerald-300/70">Act</div>
+                        </div>
+                        <div id="emptyState" class="absolute inset-0 empty-state">
+                            <i class="fa fa-map text-5xl mb-4 opacity-30"></i>
+                            <p class="text-sm">Run an analysis to see the knowledge map</p>
+                            <p class="text-xs mt-1 opacity-60">Ctrl+Enter to run</p>
+                        </div>
+                    </div>
+                    <div id="legend" class="mt-3 pt-3 border-t border-slate-700/50 hidden">
+                        <div class="flex flex-wrap gap-4 text-xs">
+                            <div class="flex items-center space-x-2"><div class="w-3 h-3 rounded-full bg-cyan-400"></div><span class="text-gray-400">Input</span></div>
+                            <div class="flex items-center space-x-2"><div class="w-3 h-3 rounded-full bg-violet-500"></div><span class="text-gray-400">Concepts</span></div>
+                            <div class="flex items-center space-x-2"><div class="w-3 h-3 rounded-full bg-amber-400"></div><span class="text-gray-400">Gaps</span></div>
+                            <div class="flex items-center space-x-2"><div class="w-3 h-3 rounded-full bg-emerald-400"></div><span class="text-gray-400">Actions</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── PANE: Report ── -->
+            <div id="report-pane" class="pane">
+                <div class="flex items-center justify-between mb-3">
+                    <h2><i class="fa fa-rocket text-primary mr-2"></i>Agent Report</h2>
+                    <div class="flex space-x-2">
+                        <button id="exportJsonBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition"><i class="fa fa-download"></i> JSON</button>
+                        <button id="exportMdBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition"><i class="fa fa-file-text"></i> Markdown</button>
+                        <button id="exportImgBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition"><i class="fa fa-picture-o"></i> PNG</button>
+                    </div>
+                </div>
+                <div id="agentContent" class="space-y-3 text-sm text-gray-300">
+                    <div class="empty-state" style="min-height:200px;">
+                        <i class="fa fa-file-text-o text-4xl mb-3 opacity-30"></i>
+                        <p class="text-sm">Run an analysis to see the report</p>
+                    </div>
+                </div>
+                <div id="statsPanel" class="hidden mt-3 glass flex items-center justify-around text-sm">
+                    <div><span id="nodeCount" class="text-xl font-bold text-primary">0</span> concepts</div>
+                    <div><span id="edgeCount" class="text-xl font-bold text-secondary">0</span> relationships</div>
+                    <div><span id="density" class="text-xl font-bold text-accent">0</span> density</div>
+                </div>
+                <div id="conceptPanel" class="hidden mt-3 glass">
+                    <h3 class="font-bold flex items-center mb-3"><i class="fa fa-info-circle mr-2 text-primary"></i>Details</h3>
+                    <div id="conceptContent" class="space-y-3"></div>
+                </div>
+            </div>
+
+            <!-- ── PANE: Chat ── -->
+            <div id="chat-pane" class="pane">
+                <div class="glass flex flex-col" style="flex:1;display:flex;">
+                    <h2 class="font-bold flex items-center mb-3"><i class="fa fa-comments text-primary mr-2"></i>Continue Asking</h2>
+
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="empty-state" style="min-height:100px;">
+                            <p class="text-sm opacity-50">Run an analysis first, then ask follow-up questions here.</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mb-2 flex-wrap">
+                        <button data-suggest="再展开第 3 个核心概念" class="chat-suggest text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded transition">展开第 3 个概念</button>
+                        <button data-suggest="换一个面向研讨会的汇报角度" class="chat-suggest text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded transition">换一个汇报角度</button>
+                        <button data-suggest="给我一份 5 分钟口头汇报稿" class="chat-suggest text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded transition">5 分钟汇报稿</button>
+                    </div>
+                    <textarea id="chatInput" placeholder="Ask Agent a follow-up question, or upload a file…" class="w-full h-24 bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"></textarea>
+                    <div class="flex items-center justify-between mt-3">
+                        <div class="flex items-center gap-2">
+                            <label for="chatFileInput" class="flex items-center justify-center w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 cursor-pointer transition" title="Upload file">
+                                <i class="fa fa-plus text-primary text-sm"></i>
+                                <input id="chatFileInput" type="file" class="hidden" accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+                            </label>
+                            <div id="chatFileInfo" class="hidden text-xs text-gray-400 truncate max-w-[160px]"></div>
+                        </div>
+                        <button id="chatSendBtn" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded text-sm text-white transition flex items-center gap-2"><i class="fa fa-paper-plane"></i> Send</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── PANE: Study ── -->
+            <div id="study-pane" class="pane">
+                <div class="flex items-center justify-between mb-3">
+                    <h2><i class="fa fa-graduation-cap text-primary mr-2"></i>Study Materials</h2>
+                    <div class="flex space-x-2">
+                        <button id="studyRefreshBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition"><i class="fa fa-refresh"></i> Refresh</button>
+                    </div>
+                </div>
+                <div class="flex gap-2 mb-3 flex-wrap">
+                    <button data-study-tab="concepts" class="study-tab-btn text-xs px-3 py-1.5 rounded bg-primary text-white font-medium">概念速览</button>
+                    <button data-study-tab="chains" class="study-tab-btn text-xs px-3 py-1.5 rounded bg-slate-700 text-gray-300 hover:bg-slate-600 transition">关系串联</button>
+                    <button data-study-tab="quiz" class="study-tab-btn text-xs px-3 py-1.5 rounded bg-slate-700 text-gray-300 hover:bg-slate-600 transition">自测练习</button>
+                    <button data-study-tab="goals" class="study-tab-btn text-xs px-3 py-1.5 rounded bg-slate-700 text-gray-300 hover:bg-slate-600 transition">学习目标</button>
+                </div>
+                <div id="studyContent" class="space-y-3 text-sm text-gray-300 flex-1 overflow-y-auto">
+                    <div class="empty-state" style="min-height:200px;">
+                        <i class="fa fa-graduation-cap text-4xl mb-3 opacity-30"></i>
+                        <p class="text-sm">Run an analysis first to generate study materials.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── PANE: Review (Anki) ── -->
+            <div id="review-pane" class="pane">
+                <div class="flex items-center justify-between mb-3">
+                    <h2><i class="fa fa-refresh text-primary mr-2"></i>Review (Anki Flashcards)</h2>
+                    <div class="flex space-x-2">
+                        <button id="reviewResetBtn" class="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded transition"><i class="fa fa-trash-o"></i> Reset Data</button>
+                    </div>
+                </div>
+                <div class="flex gap-2 mb-3 flex-wrap">
+                    <button data-review-tab="review" class="review-tab-btn text-xs px-3 py-1.5 rounded bg-primary text-white font-medium">复习模式</button>
+                    <button data-review-tab="tree" class="review-tab-btn text-xs px-3 py-1.5 rounded bg-slate-700 text-gray-300 hover:bg-slate-600 transition">知识树</button>
+                    <button data-review-tab="stats" class="review-tab-btn text-xs px-3 py-1.5 rounded bg-slate-700 text-gray-300 hover:bg-slate-600 transition">统计</button>
+                </div>
+                <div id="reviewContent" class="flex-1 flex flex-col space-y-3 text-sm text-gray-300 overflow-y-auto">
+                    <div class="empty-state" style="min-height:200px;">
+                        <i class="fa fa-refresh text-4xl mb-3 opacity-30"></i>
+                        <p class="text-sm">Run an analysis first to generate flashcards.</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- ── Guided Learning Bar ── -->
+<div id="learnGuide" class="learn-guide">
+    <div class="step-label" id="learnStepLabel">1/5</div>
+    <div class="steps" id="learnSteps"></div>
+    <div class="step-title" id="learnStepTitle">加载中...</div>
+    <button id="learnSkipBtn" class="learn-skip">跳过</button>
+    <button id="learnNextBtn" class="learn-next">开始</button>
+</div>
+
+<script src="tools/anki-engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
