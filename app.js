@@ -633,7 +633,7 @@ For overseas learners, this workflow is useful when they study in a second langu
             return JSON.parse(saved);
         }
         return {
-            backendUrl: '',
+            backendUrl: 'https://zs-eldsyxizuc.cn-hangzhou.fcapp.run',
             accessCode: ''
         };
     }
@@ -2575,12 +2575,14 @@ For overseas learners, this workflow is useful when they study in a second langu
         `;
         const btn = container.querySelector('#startReviewBtn');
         if (btn) btn.addEventListener('click', () => this._startReviewSession());
+        this.refreshReviewStats();
     }
 
     _startReviewSession() {
         this._reviewQueue = this.ankiEngine.getDueCards();
         this._reviewQueue = this._shuffleArray(this._reviewQueue);
         this._reviewIndex = 0;
+        this.refreshReviewStats();
         this._showCurrentFlashcard(document.getElementById('reviewContent'));
     }
 
@@ -2639,6 +2641,7 @@ For overseas learners, this workflow is useful when they study in a second langu
         if (!this.ankiEngine) return;
 
         const result = this.ankiEngine.rateCard(card.id, rating);
+        this.refreshReviewStats(); // ← 评分后立即刷新红标
 
         // 如果触发加深分析
         if (result.triggeredDeepDive) {
@@ -2662,6 +2665,7 @@ For overseas learners, this workflow is useful when they study in a second langu
             `;
             container.querySelector('#backReviewBtn')?.addEventListener('click', () => this.renderReviewMode(container));
             this.renderReviewTab('stats');
+            this.refreshReviewStats();
             this.showToast('复习完成！');
         } else {
             this._showCurrentFlashcard(container);
