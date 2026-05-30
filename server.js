@@ -14,58 +14,31 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(__dirname));
 
-// ── GMI Config ──────────────────────────────────────────────
-function getGMIConfig() {
+// ── Provider Config ─────────────────────────────────────────
+function getProviderConfig() {
+  const provider = process.env.API_PROVIDER || 'gmi';
+  if (provider === 'local') {
+    return {
+      provider: 'local',
+      apiBaseUrl: process.env.LOCAL_API_BASE_URL || 'http://127.0.0.1:11434',
+      modelName: process.env.LOCAL_MODEL_NAME || 'qwen2.5:7b'
+    };
+  }
   return {
+    provider: 'gmi',
     apiKey: process.env.GMI_API_KEY || process.env.API_KEY,
     apiBaseUrl: process.env.GMI_API_BASE_URL || process.env.API_BASE_URL || 'https://api.gmi-serving.com',
-    modelName: process.env.GMI_MODEL_NAME || process.env.MODEL_NAME || 'deepseek-ai/DeepSeek-V4-Pro',
-    provider: process.env.API_PROVIDER || 'gmi'
+    modelName: process.env.GMI_MODEL_NAME || process.env.MODEL_NAME || 'deepseek-ai/DeepSeek-V4-Pro'
   };
 }
 
 // ── System Prompts ──────────────────────────────────────────
-const systemPrompt = `You are ResearchGraph Agent, an AI assistant for overseas students and researchers. Analyze the user's notes, papers, slides, or project text, then convert the material into a research knowledge graph and an action-oriented study report.
+const systemPrompt = `You are ResearchGraph Agent. Analyze the user's academic text and return JSON with:
+- concepts: [{id, name, definition, importance(1-5), category}]
+- relationships: [{source, target, relationship(eg includes, depends_on, causes, contrasts_with), description}]
+- agentReport: {summary, insights:[], gaps:[], actions:[], studyPlan:["0-10min step","10-20min step","20-30min step"], seminarQuestions:[], presentationOutline:[]}
 
-Return strict JSON only, with no extra text:
-{
-  "concepts": [
-    {
-      "id": "unique lowercase id using letters, numbers, and underscores only",
-      "name": "concept name",
-      "definition": "brief definition grounded in the input text",
-      "importance": 1-5,
-      "category": "concept category"
-    }
-  ],
-  "relationships": [
-    {
-      "source": "source concept id",
-      "target": "target concept id",
-      "relationship": "relationship type, such as includes, depends_on, applies_to, causes, supports, contrasts_with, related_to",
-      "description": "brief explanation grounded in the input text"
-    }
-  ],
-  "agentReport": {
-    "summary": "3-5 sentence summary of what the material is about and why it matters for international learners",
-    "insights": ["key insight 1", "key insight 2", "key insight 3"],
-    "gaps": ["missing prerequisite, unclear assumption, or learning risk"],
-    "actions": ["specific next study, research, or presentation action"],
-    "studyPlan": ["0-10 min study step", "10-20 min study step", "20-30 min study step"],
-    "seminarQuestions": ["discussion question for class or research group"],
-    "presentationOutline": ["slide outline item"]
-  }
-}
-
-Requirements:
-1. Extract 5-15 important concepts.
-2. Relationships must be accurate, meaningful, and use concept ids that exist in concepts.
-3. importance: central topic = 5, important subtopic = 3-4, supporting concept = 1-2.
-4. The agentReport must make the result useful for global learners who need to understand academic material quickly and prepare for seminars, advisor meetings, or presentations.
-5. studyPlan must be concrete and time-boxed for 30 minutes.
-6. seminarQuestions must help users discuss the material in class or research groups.
-7. presentationOutline must be practical enough to turn into slides.
-8. If the source text is Chinese, answer in Chinese; otherwise answer in English.`;
+Rules: Extract 5-15 concepts with accurate ids used by relationships. importance=5 for core topics, 3-4 for subtopics, 1-2 for supporting. If Chinese source, reply in Chinese; otherwise English.`;
 
 const chatSystemPrompt = `You are ResearchGraph Agent, an AI research assistant for overseas students and researchers. The user has already uploaded material and received an analysis with concepts, relationships, and an agent report. Now they want to follow up with questions.
 
@@ -133,16 +106,54 @@ function parseAIContent(content) {
   return data;
 }
 
-async function callGMI(text, systemPromptOverride) {
-  const config = getGMIConfig();
-  if (!config.apiKey) throw new Error('服务端未配置 GMI_API_KEY 或 API_KEY');
 
+// ── Content Extractor ──────────────────────────────────────
+function extractContent(data) {
+  // Responses API format (local_deepseek)
+  if (data.output?.[0]?.content?.[0]?.text) {
+    return data.output[0].content[0].text;
+  }
+  // Chat Completions format (OpenAI / GMI)
+  if (data.choices?.[0]?.message?.content) {
+    return data.choices[0].message.content;
+  }
+  throw new Error('Unrecognized API response format');
+}
+
+async function callAI(text, systemPromptOverride) {
+  const config = getProviderConfig();
   const prompt = systemPromptOverride || systemPrompt;
+
+  if (config.provider === 'local') {
+    // Ollama local API
+    const response = await fetch(`${config.apiBaseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.modelName,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: text }
+        ],
+        temperature: 0.1,
+        stream: false
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error?.message || data.error || '本地模型调用失败');
+    }
+    return parseAIContent(extractContent(data));
+  }
+
+  // GMI Cloud API
+  if (!config.apiKey) throw new Error('服务端未配置 GMI_API_KEY');
 
   const response = await fetch(`${config.apiBaseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': 'ResearchGraph-Agent/1.0',
       Authorization: `Bearer ${config.apiKey}`
     },
     body: JSON.stringify({
@@ -152,15 +163,23 @@ async function callGMI(text, systemPromptOverride) {
         { role: 'user', content: text }
       ],
       temperature: 0.3,
-      response_format: { type: 'json_object' }
+      max_tokens: 4096
     })
   });
 
   const data = await response.json();
   if (!response.ok) {
+    console.error('[GMI] API error:', response.status, JSON.stringify(data).slice(0,300));
     throw new Error(data.error?.message || data.error || 'API调用失败');
   }
-  return parseAIContent(data.choices[0].message.content);
+
+  const result = extractContent(data);
+  if (!result || result.trim().length < 10) {
+    console.error('[GMI] Empty response, raw:', JSON.stringify(data).slice(0,400));
+    throw new Error('GMI返回空内容，可能reasoning消耗了全部token');
+  }
+
+  return parseAIContent(result);
 }
 
 // ── Tool Registry ───────────────────────────────────────────
@@ -184,7 +203,7 @@ registry.register('extractOntology', {
     const text = ctx.ingest?.text || ctx.text || '';
     if (!text) throw new Error('No text to analyze');
     try {
-      return await callGMI(text);
+      return await callAI(text);
     } catch (err) {
       console.warn('GMI unavailable, returning fallback placeholder:', err.message);
       return { concepts: [], relationships: [], agentReport: null, needsFallback: true };
@@ -214,7 +233,7 @@ registry.register('chatFollowup', {
   outputSchema: { reply: 'Agent response text' },
   boundaries: 'Session-scoped only. Falls back to local rules when GMI unavailable.',
   handler: async (ctx) => {
-    const config = getGMIConfig();
+    const config = getProviderConfig();
     if (!config.apiKey) throw new Error('GMI API key not configured');
 
     const contextSummary = ctx.context
@@ -225,7 +244,8 @@ registry.register('chatFollowup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`
+        'User-Agent': 'ResearchGraph-Agent/1.0',
+      Authorization: `Bearer ${config.apiKey}`
       },
       body: JSON.stringify({
         model: config.modelName,
@@ -241,7 +261,7 @@ registry.register('chatFollowup', {
     if (!response.ok) {
       throw new Error(data.error?.message || data.error || data.message || 'API调用失败');
     }
-    return { reply: data.choices[0].message.content };
+    return { reply: extractContent(data) };
   },
   runLocation: 'server'
 });
@@ -255,7 +275,7 @@ registry.register('deepDive', {
     const { conceptName, originalContext, layer = 1 } = ctx;
     if (!conceptName) throw new Error('Concept name is required');
 
-    const config = getGMIConfig();
+    const config = getProviderConfig();
     if (!config.apiKey) throw new Error('GMI API key not configured');
 
     const prompt = `Concept to deepen: "${conceptName}"
@@ -268,7 +288,8 @@ ${deepDiveSystemPrompt}`;
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`
+        'User-Agent': 'ResearchGraph-Agent/1.0',
+      Authorization: `Bearer ${config.apiKey}`
       },
       body: JSON.stringify({
         model: config.modelName,
@@ -286,7 +307,7 @@ ${deepDiveSystemPrompt}`;
       throw new Error(data.error?.message || data.error || 'Deep dive API call failed');
     }
     const result = JSON.parse(
-      data.choices[0].message.content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+      extractContent(data).replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     );
     return {
       subConcepts: result.subConcepts || [],
@@ -307,7 +328,7 @@ const engine = new ExecutionEngine(registry);
 
 // Provider status (unchanged)
 app.get('/api/provider', (req, res) => {
-  const config = getGMIConfig();
+  const config = getProviderConfig();
   res.json({
     provider: config.provider,
     baseUrlConfigured: Boolean(config.apiBaseUrl),
@@ -332,7 +353,7 @@ app.post('/api/extract', async (req, res) => {
       return res.status(400).json({ error: '文本过长，请控制在8000字以内' });
     }
 
-    const result = await callGMI(text);
+    const result = await callAI(text);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message || '服务器错误' });

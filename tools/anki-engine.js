@@ -20,15 +20,19 @@ class AnkiEngine {
   // ─── 持久化 ─────────────────────────────────────────────────
 
   _load() {
-    try {
-      const raw = localStorage.getItem(this.storageKey);
-      if (raw) return JSON.parse(raw);
-    } catch (e) { /* ignore */ }
+    // Always start fresh to avoid corrupted state issues
+    localStorage.removeItem(this.storageKey);
     return { cards: [], reviews: [], deepDives: [], stats: this._freshStats() };
   }
 
   _save() {
-    localStorage.setItem(this.storageKey, JSON.stringify(this.data));
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(this.data));
+    } catch (e) {
+      console.warn('[AnkiEngine] Failed to save:', e.message, 'Resetting data.');
+      this.data = { cards: [], reviews: [], deepDives: [], stats: this._freshStats() };
+      localStorage.setItem(this.storageKey, JSON.stringify(this.data));
+    }
   }
 
   _freshStats() {

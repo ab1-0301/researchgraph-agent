@@ -6,7 +6,12 @@ class OntologyNoteHelper {
         this.chatHistory = [];
         this.chatLoading = false;
         this.settings = this.loadSettings();
-        this.ankiEngine = typeof AnkiEngine !== 'undefined' ? new AnkiEngine() : null;
+        this.ankiEngine = null;
+    try {
+      if (typeof AnkiEngine !== 'undefined') this.ankiEngine = new AnkiEngine();
+    } catch (e) {
+      console.warn('[App] AnkiEngine init failed:', e.message);
+    }
         this.pendingDeepDives = [];
         this.studyQuizAnswers = {};
         this.studyGoals = {};
@@ -79,7 +84,7 @@ class OntologyNoteHelper {
                         'label': 'data(label)',
                         'color': '#f8fafc',
                         'font-size': (ele) => ele.data('importance') >= 5 ? '13px' : '11px',
-                        'font-weight': (ele) => ele.data('importance') >= 4 ? '700' : '500',
+                        'font-weight': (ele) => ele.data('importance') >= 4 ? 'bold' : 'normal',
                         'text-valign': 'center',
                         'text-halign': 'center',
                         'width': (ele) => 34 + (ele.data('importance') || 1) * 12,
@@ -108,7 +113,7 @@ class OntologyNoteHelper {
                         'curve-style': 'bezier',
                         'label': 'data(relationship)',
                         'font-size': (ele) => ele.data('isActionPath') ? '11px' : '9px',
-                        'font-weight': (ele) => ele.data('isActionPath') ? '700' : '500',
+                        'font-weight': (ele) => ele.data('isActionPath') ? 'bold' : 'normal',
                         'color': '#cbd5e1',
                         'text-background-color': '#0f172a',
                         'text-background-opacity': 0.75,
@@ -681,8 +686,10 @@ For overseas learners, this workflow is useful when they study in a second langu
 
     // 提取本体论
     async extractOntology() {
+        console.log('[extractOntology] START');
         const text = document.getElementById('noteInput').value.trim();
         if (!text) { this.showToast('请先输入笔记内容！'); return; }
+        console.log('[extractOntology] text length:', text.length);
 
         // 先清理但不破坏 DOM 结构
         if (this.cy) { try { this.cy.elements().remove(); } catch(e) {} }
@@ -698,7 +705,10 @@ For overseas learners, this workflow is useful when they study in a second langu
 
         // 本地规则秒出（不依赖后端，不依赖 3D 库）
         const localResult = this.extractWithLocalRules(text);
+        console.log('[extractOntology] localResult concepts:', localResult?.concepts?.length);
+        console.log('[extractOntology] this.cy:', !!this.cy);
         this.renderGraph(localResult);
+        console.log('[extractOntology] renderGraph done');
         this.showStatus('图谱已生成', false);
 
         // 后台调 GMI（不阻塞 UI）
@@ -711,10 +721,18 @@ For overseas learners, this workflow is useful when they study in a second langu
             });
             if (resp.ok) {
                 const gmiData = await resp.json();
-                this.renderGraph(gmiData);
-                this.showToast('GMI Cloud 已优化图谱');
+                if (gmiData && Array.isArray(gmiData.concepts) && gmiData.concepts.length > 0) {
+                    this.renderGraph(gmiData);
+                    this.showToast('GMI Cloud 已优化图谱');
+                } else {
+                    console.warn('[Agent] GMI returned empty concepts, keeping local graph');
+                }
+            } else {
+                console.warn('[Agent] GMI API error:', resp.status);
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('[Agent] GMI fetch failed:', e.message);
+        }
         this.hideStatus();
     }
 
@@ -942,6 +960,8 @@ For overseas learners, this workflow is useful when they study in a second langu
 
     // 渲染图谱
     renderGraph(data) {
+        if (!data) { console.warn("[renderGraph] called with null/undefined data, skipping"); return; }
+        console.log('[renderGraph] called, concepts:', data?.concepts?.length, 'cy:', !!this.cy);
         this.currentData = data;
         this.renderAgentReport(data.agentReport);
 
@@ -950,13 +970,16 @@ For overseas learners, this workflow is useful when they study in a second langu
         document.getElementById('emptyState').classList.add('hidden');
         document.getElementById('statsPanel').classList.remove('hidden');
 
-        // 3D 图谱（当 ForceGraph3D 可用且 cytoscape 未初始化时）
-        if (typeof ForceGraph3D !== 'undefined' && !this.cy) {
-            this.renderGraph3D(data);
-            return;
+        // Lazy init: CDN may have loaded after constructor
+        if (!this.cy && window.cytoscape) {
+            console.log('[renderGraph] lazy init cytoscape');
+            this.initCytoscape();
         }
 
+        console.log('[renderGraph] after lazy init, cy:', !!this.cy);
+        // 优先用 Cytoscape 2D 图谱；不可用时用纯 DOM fallback
         if (!this.cy) {
+            console.log('[renderGraph] no cy, using fallback');
             this.renderGraphFallback(data);
             this.updateStatsFallback(data);
             document.getElementById('legend').classList.remove('hidden');
@@ -2105,7 +2128,7 @@ For overseas learners, this workflow is useful when they study in a second langu
     _renderGuidance(container) {
         const guide = this._getGuidance();
         if (!guide) return;
-        const clickHandler = guide.target ? `onclick="document.querySelector('[data-pane=\\'${guide.target}\\']')?.click(); this._renderReviewTab('${guide.tab}')"` : '';
+        const clickHandler = guide.target ? `onclick="document.querySelector('[data-pane=\\'${guide.target}\\']')?.click(); this.renderReviewTab('${guide.tab}')"` : '';
         const bar = document.createElement('div');
         bar.className = 'glass mb-3 p-3 flex items-center justify-between';
         bar.style.borderLeft = '3px solid #a855f7';
@@ -2575,7 +2598,6 @@ For overseas learners, this workflow is useful when they study in a second langu
         `;
         const btn = container.querySelector('#startReviewBtn');
         if (btn) btn.addEventListener('click', () => this._startReviewSession());
-        this.refreshReviewStats();
     }
 
     _startReviewSession() {
@@ -2859,10 +2881,17 @@ For overseas learners, this workflow is useful when they study in a second langu
     }
 
     refreshReviewStats() {
-        // 如果 Review 标签处于激活状态，刷新它
-        const activeReviewTab = document.querySelector('[data-review-tab].bg-primary')?.dataset.reviewTab;
-        if (activeReviewTab) {
-            this.renderReviewTab(activeReviewTab);
+        // Guard against re-entrance
+        if (this._refreshingStats) return;
+        this._refreshingStats = true;
+        try {
+            // 如果 Review 标签处于激活状态，刷新它
+            const activeReviewTab = document.querySelector('[data-review-tab].bg-primary')?.dataset.reviewTab;
+            if (activeReviewTab) {
+                this.renderReviewTab(activeReviewTab);
+            }
+        } finally {
+            this._refreshingStats = false;
         }
         // 更新侧边栏徽标（小红点）
         if (this.ankiEngine) {
@@ -3023,7 +3052,14 @@ For overseas learners, this workflow is useful when they study in a second langu
     }
 }
 
-// 初始化应用
-document.addEventListener('DOMContentLoaded', () => {
+// 初始化应用 - 等待 CDN 脚本就绪后初始化
+(function initApp() {
+    // cytoscape is required; wait for it
+    if (typeof cytoscape === 'undefined') {
+        setTimeout(initApp, 200);
+        return;
+    }
+    console.log('[App] CDN scripts ready, initializing...');
     window.app = new OntologyNoteHelper();
-});
+    console.log('[App] OntologyNoteHelper initialized, cy:', !!window.app?.cy);
+})();
